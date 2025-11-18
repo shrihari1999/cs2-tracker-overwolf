@@ -1,0 +1,70 @@
+{
+	"manifest_version":1,
+	"type":"WebApp",
+	"meta":{
+		"name":"CS2 Tracker",
+		"version":"1.0.0",
+		"minimum-overwolf-version":"0.77.10",
+		"author":"Shrihari",
+		"icon":"IconMouseOver.png",
+		"icon_gray":"IconMouseNormal.png",
+		"description":"CS2 Tracker that can show history with opponents"
+	},
+	"permissions": ["GameInfo", "Hotkeys"],
+	"data": {
+		"start_window":"MainWindow",
+		"game_events": [
+			22730
+		],
+		"game_targeting": {
+			"type": "dedicated",
+			"game_ids": [
+				22730
+			]
+		},
+		"launch_events": [
+			{
+				"event": "GameLaunch",
+				"event_data": {
+					"game_ids": [
+						22730
+					]
+				},
+				"start_minimized": true
+			}
+		],
+		"windows":{
+			"MainWindow":{
+					"file":"Files/index.html",
+					"transparent": true,
+					"resizable": true,
+					"native_window": true,
+					"use_os_windowing": true,
+					"size": {
+						"width":700,
+						"height":400
+						},
+					"min_size": {
+						"width":400,
+						"height":400
+					},
+					"disable_hardware_acceleration": true
+				},
+			"SubWindow":{
+					"file":"Files/subwindow.html",
+					"transparent":true,
+					"resizable":false,
+					"size":{
+						"width":400,
+						"height":300
+					},
+					"disable_hardware_acceleration": true
+				}
+		},
+		"externally_connectable": {
+			"matches": [
+				"https://*.tracker.gg"
+			]
+		}
+	}
+}

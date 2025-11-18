@@ -1,0 +1,338 @@
+﻿<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="css/style.css" />
+    <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+    <title>Demo app</title>
+    <link href="https://fonts.googleapis.com/css?family=Titillium+Web:300,400,600" rel="stylesheet">
+
+    <script>
+      // Window functions
+      function dragMove(){
+        overwolf.windows.getCurrentWindow(function(result){
+          if (result.status=="success" && result.window.state !== "Maximized"){
+            overwolf.windows.dragMove(result.window.id);
+          }
+        });
+      };
+
+      function closeWindow(){
+        overwolf.windows.getCurrentWindow(function(result){
+          if (result.status=="success"){
+            overwolf.windows.close(result.window.id);
+          }
+        });
+      };
+
+      function minimize(){
+        overwolf.windows.getCurrentWindow(function(result){
+          if (result.status=="success"){
+            overwolf.windows.minimize(result.window.id);
+          }
+        });
+      };
+
+      function toggleMaximize(){
+        let element = document.querySelector('.maximize-restore-selector'),
+            root = document.documentElement;
+
+        overwolf.windows.getCurrentWindow(function(result){
+          if (result.status !== "success") {
+            return;
+          }
+
+          if (element.checked) {
+            overwolf.windows.restore(result.window.id);
+            root.classList.remove('maximized');
+          } else {
+            overwolf.windows.maximize(result.window.id);
+            root.classList.add('maximized');
+          }
+        });
+      };
+
+      function showSupport() {
+        window.location.href = "overwolf://settings/support";
+      };
+
+      function dragResize(edge){
+        overwolf.windows.getCurrentWindow(function(result){
+          if (result.status=="success"){
+            overwolf.windows.dragResize(result.window.id, edge);
+          }
+        });
+      };
+
+      function openSubWindow(){
+        // get total seasons
+        fetch(`https://api.tracker.gg/api/v2/cs2/standard/profile/steam/${steamUserId}`, {
+          "headers": getTrackerHeaders(),
+          "referrer": "https://tracker.gg/",
+          "body": null,
+          "method": "GET",
+        })
+        .then(r => r.json())
+        .then(r => {
+          let seasonIds = r['data']['metadata']['premierSeasons'].map(season => season.id)
+          let promises = []
+          seasonIds.forEach(seasonId => {
+            let promise = fetch(`https://api.tracker.gg/api/v2/cs2/standard/profile/steam/${steamUserId}/segments/season?playlist=premier&seasonId=${seasonId}`, {
+              "headers": getTrackerHeaders(),
+              "referrer": "https://tracker.gg/",
+              "body": null,
+              "method": "GET",
+            })
+            .then(r => r.json())
+            promises.push(promise)
+          });
+          Promise.all(promises).then(responses => {
+            let totalMatches = 0
+            responses.forEach(r => {
+              let season = r['data'].find(d => d['type'] === 'season')
+              totalMatches += season['stats']['matchesPlayed']['value']
+            });
+            totalMatches = 20
+            let numberOfPages = Math.ceil(totalMatches / 20)
+            // scan all matches of player
+            let promises = []
+            for (let page = 0; page <= numberOfPages; page++) {
+              let promise = fetch(`https://api.tracker.gg/api/v2/cs2/standard/matches/steam/${steamUserId}?type=premier&season=&mode=all&next=${page}`, {
+                "headers": getTrackerHeaders(),
+                "referrer": "https://tracker.gg/",
+                "body": null,
+                "method": "GET",
+              })
+              .then(r => r.json())
+              promises.push(promise);
+            }
+            // accumulate counter once all promises resolved
+            Promise.all(promises).then(async (matchesResponses) => {
+              let matchIds = []
+              matchesResponses.forEach(matchesResponse => {
+                matchIds.push(...matchesResponse['data']['matches'].map(match => match['attributes']['id']))
+              });
+
+              const existingMatchIds = await new Promise((resolve, reject) => {
+                const tx = db.transaction('matches', "readonly");
+                const store = tx.objectStore('matches');
+                const req = store.getAllKeys();
+
+                req.onsuccess = () => {
+                  resolve(new Set(req.result));
+                };
+                req.onerror = () => reject(req.error);
+              });
+              const newMatchIds = matchIds.filter(matchId => !existingMatchIds.has(matchId));
+              
+              let promises = []
+              newMatchIds.forEach(matchId => {
+                let promise = fetch(`https://api.tracker.gg/api/v2/cs2/standard/matches/${matchId}`, {
+                  "headers": getTrackerHeaders(),
+                  "referrer": "https://tracker.gg/",
+                  "body": null,
+                  "method": "GET",
+                })
+                .then(r => r.json())
+                promises.push(promise);
+              });
+              Promise.all(promises).then((newMatches) => {
+                newMatches.forEach(async function(newMatch){
+                  let simplifiedNewMatch = {
+                    matchId: newMatch['data']['attributes']['id'],
+                    timestamp: new Date(newMatch['data']['metadata']['timestamp']).getTime(),
+                    team1: {
+                      playerIds: ['user123', 'p2', 'p3', 'p4', 'p5'],
+                      score: 25
+                    },
+                    team2: {
+                      playerIds: ['p6', 'p7', 'p8', 'p9', 'p10'],
+                      score: 20
+                    }
+                  }
+                  newMatch['data']['segments'].filter(segment => segment['type'] == 'team').forEach(segment => {
+                    
+                  }, index)
+                  
+                  await db.addMatch(simplifiedNewMatch);
+                  
+                  return {
+                    'id': newMatch['data']['attributes']['id'],
+                    'teamSegments': newMatch['data']['segments'].filter(segment => segment['type'] == 'team'),
+                    'playerSegments': newMatch['data']['segments'].filter(segment => segment['type'] == 'player').map(({ stats, ...rest }) => rest)
+                  }
+                })
+              })
+            })
+          })
+        })
+        return
+        alert("opened subwindow");
+        overwolf.windows.obtainDeclaredWindow("SubWindow", function(result){
+          if (result.status == "success"){
+            overwolf.windows.restore(result.window.id, function(result){
+                console.log(result);
+            });
+          }
+        });
+      };
+
+      // App variables
+      const steamUserId = '76561198300127244';
+      const db = new MatchHistoryDB();
+
+      // App functions
+      function getTrackerHeaders(){
+        return {
+          "accept": "application/json, text/plain, */*",
+          "accept-language": "en-GB,en-US;q=0.9,en;q=0.8",
+          "authorization": "Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6IkU4NTE1OEM3NDhGNzU1MzgxOUQwQUU5MDVGM0Q1OTkxMjI4MTg3QzIiLCJ0eXAiOiJhdCtqd3QiLCJ4NXQiOiI2RkZZeDBqM1ZUZ1owSzZRWHoxWmtTS0JoOEkifQ.eyJuYmYiOjE3NjMzODE2MDksImV4cCI6MTc2MzM4NTIwOSwiaXNzIjoiaHR0cHM6Ly9hY2NvdW50LnRyYWNrZXIuZ2ciLCJhdWQiOlsiYWNjb3VudCIsImFwaSIsImV2ZW50cyJdLCJjbGllbnRfaWQiOiIwYWYyNTIxZS0zM2U5LTRkNDAtODM2ZS02Zjg2NWNiOTg4NzAiLCJzdWIiOiIxNTUyMDAxMiIsImF1dGhfdGltZSI6MTc2MzI5MjAxMCwiaWRwIjoibG9jYWwiLCJyb2xlIjoiVXNlciIsIm5hbWUiOiIzZGYxMWNhZC02MmFlLTRjMGQtYTQxMC02NDA1NmM4OTdhN2IiLCJzY29wZSI6WyJvcGVuaWQiLCJwcm9maWxlIiwiYWNjb3VudCIsImFwaSIsImV2ZW50cyIsIm9mZmxpbmVfYWNjZXNzIl0sImFtciI6WyJwd2QiXX0.AJ-VX_EsFvoJFNlw6bsF1jafunngKC_kQ2H06UJOcj7hxg0ZGwXr7Mtdd6st0Lr7shoJSOqLbQstRfVevEfq9JYVa-1b1tFhvQBKwcKgK9s7GAXrGGmS5z-N54d1dizm6NCtTVLTIdMbuxXpa0Zv4oShqVoEPVjwvTm8pqqx-8AFLtmcqgTubV4W9fL4PERk2Wz7EAZByYZDTwFHl3xM-HUxhsgHXXzBeJIPQ8ghpjGjeg4nYS1n4bTCs-AUGCYN_HM4H3Go8osAZuFL0HZ4LIUrDqLmFdBYBYZC3S-EGJJc6_6l5TBRDlSN9LZ9bLZhs8OWtMdXDZ49pV9v6aaXtdn20NN7fAn4M_CnauYD8n6k4NXxUg2NqzLM2zmar0RUxW1JoiCL_hEPKuBASlAijkoA_xPtH0sqFud7WlOi6Femn1cWm7QcwE4udY8E42CA4eqRIkwIhb7iOk6Yk_10D5FY9lPr9s7E-sPIot5Tw82LrYPFXaGCLi57Y3WkMazZeWt3EnpAp4CTfnHAaG8P2yu6flRbpYmfRUhPXrKAfa21hYSZY9l5o0zfwEMl1wCKc47trOV4ZFZM8mxJHalNvlfWgJSa68Wi-yCRJ4muTmRfR-WD1MpQ7qCMLpDZ_6CbOcBKiOb5rqu-osH8En1YSlaUFgW0rO5-Py3RGTVr2Rg",
+          "priority": "u=1, i",
+          "sec-ch-ua": "\"Chromium\";v=\"142\", \"Google Chrome\";v=\"142\", \"Not_A Brand\";v=\"99\"",
+          "sec-ch-ua-mobile": "?0",
+          "sec-ch-ua-platform": "\"Windows\"",
+          "sec-fetch-dest": "empty",
+          "sec-fetch-mode": "cors",
+          "sec-fetch-site": "same-site"
+        }
+      }
+
+      async function setRequiredFeatures() {
+        let tries = 1;
+        let result;
+        const MAX_RETRIES = 100
+        const FEATURES_ARRAY = ['match_info']
+
+        while ( tries <= MAX_RETRIES ) {
+          result = await new Promise(resolve => {
+            overwolf.games.events.setRequiredFeatures(FEATURES_ARRAY, resolve);
+          })
+
+          if ( result.success === true ) {
+            // make sure our required features were registered
+            return (result.supportedFeatures.length > 0);
+          }
+
+          // wait 3 sec before retry
+          await new Promise(resolve => {
+            setTimeout(resolve, 3000);
+          });
+          tries++;
+        }
+
+        console.warn('setRequiredFeatures(): failure after '+ tries +' tries'+ JSON.stringify(result, null, 2));
+        return false;
+      }
+
+      function handleMatchInfoUpdate(event){
+        if(event.feature == 'match_info'){
+          let matchInfo = event.info?.match_info
+          if(matchInfo){
+            let matchInfoKey = Object.keys(matchInfo)[0]
+            if(matchInfoKey.startsWith('roster_')){
+              let rosterInfo = matchInfo[matchInfoKey]
+              if(rosterInfo != 'null'){
+                // whistles 3/4
+                rosterInfo = JSON.parse(rosterInfo)
+                if(rosterInfo.steamid != '0' && rosterInfo['team']){
+                  console.log(rosterInfo)
+                }
+              }
+            }
+          }
+        }
+      }
+
+      function handleGameInfoUpdate(event){
+        let gameInfo = event.gameInfo
+        let status = document.getElementById('status')
+        
+        if(gameInfo?.isRunning){
+          status.textContent = `${gameInfo?.title} is running`;
+          setRequiredFeatures().then(function(success){
+            if(success){
+              overwolf.games.events.onInfoUpdates2.removeListener(handleMatchInfoUpdate)
+              overwolf.games.events.onInfoUpdates2.addListener(handleMatchInfoUpdate)
+            }
+          })
+        }
+        else{
+          status.textContent = 'Waiting for game to launch...'
+        }
+      }
+
+      document.addEventListener("DOMContentLoaded", async function(){
+        // Initialize db
+        await db.init();
+        // Remove all listeners
+        overwolf.games.onGameInfoUpdated.removeListener(handleGameInfoUpdate)
+        // Initial get
+        overwolf.games.getRunningGameInfo2(handleGameInfoUpdate)
+        // Add listeners
+        overwolf.games.onGameInfoUpdated.addListener(handleGameInfoUpdate);
+      })
+
+    </script>
+  </head>
+
+  <body>
+    <div class="content" onmousedown="dragMove();">
+      <header>
+        <div class="window-controls-group">
+          <button class="window-control" onclick="showSupport()">
+            <svg class="svg-icon-fill">
+              <use xlink:href="assets/svg/sprite.svg#window-control_support" />
+            </svg>
+          </button>
+
+          <button class="window-control">
+            <svg class="svg-icon-fill">
+              <use xlink:href="assets/svg/sprite.svg#window-control_settings" />
+            </svg>
+          </button>
+
+          <button class="window-control" onclick="minimize()">
+            <svg class="svg-icon-fill">
+              <use xlink:href="assets/svg/sprite.svg#window-control_minimize" />
+            </svg>
+          </button>
+
+          <button class="window-control" onclick="toggleMaximize()">
+            <input type="checkbox" class="maximize-restore-selector toggle-icons" checked />
+            <svg class="svg-icon-fill svg-icon-restore">
+              <use xlink:href="assets/svg/sprite.svg#window-control_restore" />
+            </svg>
+            <svg class="svg-icon-fill svg-icon-maximize">
+              <use xlink:href="assets/svg/sprite.svg#window-control_maximize" />
+            </svg>
+          </button>
+
+          <button class="window-control window-control-close" onclick="closeWindow();">
+            <svg class="svg-icon-fill">
+              <use xlink:href="assets/svg/sprite.svg#window-control_close" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <main>
+        <h1>CS2 Tracker</h1>
+        <p id="status">Waiting for game to launch...</p>
+
+        <div class="btn-group">
+          <button class="btn" id="close" onclick="closeWindow();">Close</button>
+          <button class="btn" id="open-subwindow" onclick="openSubWindow();">Open Sub-Window</button>
+        </div>
+      </main>
+    </div>
+
+    <div class="resize horizontal top" onmousedown="dragResize('Top');"></div>
+    <div class="resize vertical left" onmousedown="dragResize('Left');"></div>
+    <div class="resize vertical right" onmousedown="dragResize('Right');"></div>
+    <div class="resize horizontal bottom" onmousedown="dragResize('Bottom');"></div>
+
+    <div class="resize corner top-left" onmousedown="dragResize('TopLeft');"></div>
+    <div class="resize corner top-right" onmousedown="dragResize('TopRight');"></div>
+    <div class="resize corner bottom-left" onmousedown="dragResize('BottomLeft');"></div>
+    <div class="resize corner bottom-right" onmousedown="dragResize('BottomRight');"></div>
+  </body>
+</html>
