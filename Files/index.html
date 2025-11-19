@@ -63,7 +63,7 @@
         });
       };
 
-      function openSubWindow(){
+      async function openSubWindow(){
         // get total seasons
         fetch(`https://api.tracker.gg/api/v2/cs2/standard/profile/steam/${steamUserId}`, {
           "headers": getTrackerHeaders(),
@@ -162,7 +162,7 @@
       };
       // App classes
       class CS2TrackerDB {
-        constructor(dbName = 'MatchHistoryDB', version = 1) {
+        constructor(dbName = 'CS2TrackerDB', version = 1) {
           this.dbName = dbName;
           this.version = version;
           this.db = null;
@@ -198,6 +198,7 @@
               // Store 3: Live lobby players
               if (!db.objectStoreNames.contains('lobby')) {
                 const lobbyStore = db.createObjectStore('lobby', { keyPath: 'playerId' });
+                lobbyStore.createIndex('team', 'team', { unique: false });
               }
             };
           });
@@ -335,21 +336,38 @@
           return results;
         }
       
-        // Get all players in lobby
-        async getLobbyPlayers(){
+        // Get players by team (CT or T) - sorted by damageOrScore
+        async getLobbyPlayersByTeam(team) {
           return new Promise((resolve, reject) => {
             const tx = this.db.transaction('lobby', 'readonly');
             const store = tx.objectStore('lobby');
-            const request = store.getAll();
+            const index = store.index('team');
+            const request = index.getAll(team);
 
-            request.onsuccess = () => resolve(request.result);
+            request.onsuccess = () => {
+              // Sort by damageOrScore in descending order (highest first)
+              const players = request.result.sort((a, b) => b.damageOrScore - a.damageOrScore);
+              resolve(players);
+            };
             request.onerror = () => reject(request.error);
+          });
+        }
+
+        // Clear all lobby players (for new match)
+        async clearLobby() {
+          return new Promise((resolve, reject) => {
+            const tx = this.db.transaction('lobby', 'readwrite');
+            const store = tx.objectStore('lobby');
+            const request = store.clear();
+
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
           });
         }
 
         // Add a lobby player
         async addLobbyPlayer(player){
-          const tx = db.transaction('lobby', 'readwrite');
+          const tx = this.db.transaction('lobby', 'readwrite');
           const store = tx.objectStore('lobby');
           store.put(player);
           return new Promise((resolve, reject) => {
@@ -406,6 +424,15 @@
         return false;
       }
 
+      async function renderTeamList(team){
+        let container = `${team}-container`
+        const players = await cs2TrackerDB.getLobbyPlayersByTeam(team);
+        // console.log(`${team} Team:`, players);
+        // const otherPlayers = [...ctPlayers, ...tPlayers].filter(p => p !== steamUserId)
+        // console.log(otherPlayers)
+        // const records = await db.calculateLobbyRecords(steamUserId, otherPlayers);
+      }
+
       function handleMatchInfoUpdate(event){
         if(event.feature == 'match_info'){
           let matchInfo = event.info?.match_info
@@ -416,10 +443,14 @@
               if(rosterInfo != 'null'){
                 rosterInfo = JSON.parse(rosterInfo)
                 if(rosterInfo['steamid'] != '0' && rosterInfo['team']){
-                  let player = {playerId: rosterInfo['steamid'], team: rosterInfo['team'], name: rosterInfo['nickname']}
+                  let player = {playerId: rosterInfo['steamid'], team: rosterInfo['team'], name: rosterInfo['nickname'], damageOrScore: rosterInfo['damange'] || rosterInfo['score']}
                   cs2TrackerDB.addLobbyPlayer(player)
+                  renderTeamList(rosterInfo['team'])
                 }
               }
+            }
+            else if(matchInfoKey == 'pseudo_match_id' && Boolean(matchInfo[matchInfoKey])){
+              cs2TrackerDB.clearLobby()
             }
           }
         }
