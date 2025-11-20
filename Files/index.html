@@ -3,7 +3,7 @@
   <head>
     <link rel="stylesheet" href="css/style.css" />
     <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
-    <title>Demo app</title>
+    <title>CS2 Tracker</title>
     <link href="https://fonts.googleapis.com/css?family=Titillium+Web:300,400,600" rel="stylesheet">
 
     <script>
@@ -63,103 +63,16 @@
         });
       };
 
-      async function openSubWindow(){
-        // get total seasons
-        fetch(`https://api.tracker.gg/api/v2/cs2/standard/profile/steam/${steamUserId}`, {
-          "headers": getTrackerHeaders(),
-          "referrer": "https://tracker.gg/",
-          "body": null,
-          "method": "GET",
-        })
-        .then(r => r.json())
-        .then(r => {
-          let seasonIds = r['data']['metadata']['premierSeasons'].map(season => season.id)
-          let promises = []
-          seasonIds.forEach(seasonId => {
-            let promise = fetch(`https://api.tracker.gg/api/v2/cs2/standard/profile/steam/${steamUserId}/segments/season?playlist=premier&seasonId=${seasonId}`, {
-              "headers": getTrackerHeaders(),
-              "referrer": "https://tracker.gg/",
-              "body": null,
-              "method": "GET",
-            })
-            .then(r => r.json())
-            promises.push(promise)
-          });
-          Promise.all(promises).then(responses => {
-            let totalMatches = 0
-            responses.forEach(r => {
-              let season = r['data'].find(d => d['type'] === 'season')
-              totalMatches += season['stats']['matchesPlayed']['value']
-            });
-            totalMatches = 10
-            let numberOfPages = Math.ceil(totalMatches / 20)
-            // scan all matches of player
-            let promises = []
-            for (let page = 0; page <= numberOfPages; page++) {
-              let promise = fetch(`https://api.tracker.gg/api/v2/cs2/standard/matches/steam/${steamUserId}?type=premier&season=&mode=all&next=${page}`, {
-                "headers": getTrackerHeaders(),
-                "referrer": "https://tracker.gg/",
-                "body": null,
-                "method": "GET",
-              })
-              .then(r => r.json())
-              promises.push(promise);
-            }
-            // accumulate counter once all promises resolved
-            Promise.all(promises).then(async (matchesResponses) => {
-              let matchIds = []
-              matchesResponses.forEach(matchesResponse => {
-                matchIds.push(...matchesResponse['data']['matches'].map(match => match['attributes']['id']))
-              });
-
-              const existingMatchIds = new Set(await cs2TrackerDB.getExistingMatches())
-              const newMatchIds = matchIds.filter(matchId => !existingMatchIds.has(matchId));
-              
-              let promises = []
-              newMatchIds.forEach(matchId => {
-                let promise = fetch(`https://api.tracker.gg/api/v2/cs2/standard/matches/${matchId}`, {
-                  "headers": getTrackerHeaders(),
-                  "referrer": "https://tracker.gg/",
-                  "body": null,
-                  "method": "GET",
-                })
-                .then(r => r.json())
-                promises.push(promise);
-              });
-              Promise.all(promises).then((newMatches) => {
-                newMatches.forEach(async function(newMatch){
-                  let simplifiedNewMatch = {
-                    matchId: newMatch['data']['attributes']['id'],
-                    timestamp: new Date(newMatch['data']['metadata']['timestamp']).getTime()
-                  }
-                  let teamIndexMapping = {}
-                  newMatch['data']['segments'].filter(segment => segment['type'] == 'team').forEach((segment, index) => {
-                    let teamNumber = index + 1
-                    simplifiedNewMatch[`team${teamNumber}`] = {score: segment['stats']['score']['value'], playerIds: []}
-                    teamIndexMapping[segment['attributes']['teamId']] = teamNumber
-                  })
-                  newMatch['data']['segments'].filter(segment => segment['type'] == 'player').forEach(segment => {
-                    let teamNumber = segment['attributes']['teamId']
-                    simplifiedNewMatch[`team${teamIndexMapping[teamNumber]}`].playerIds.push(segment['attributes']['id'])
-                  })
-
-                  await cs2TrackerDB.addMatch(simplifiedNewMatch);
-                })
-                console.log(newMatches.length)
-              })
-            })
-          })
-        })
-        return
-        alert("opened subwindow");
+      function openSubWindow(){
         overwolf.windows.obtainDeclaredWindow("SubWindow", function(result){
           if (result.status == "success"){
             overwolf.windows.restore(result.window.id, function(result){
-                console.log(result);
+                
             });
           }
         });
       };
+      
       // App classes
       class CS2TrackerDB {
         constructor(dbName = 'CS2TrackerDB', version = 1) {
@@ -285,58 +198,61 @@
         }
 
         // Calculate head-to-head records for lobby
-        async calculateLobbyRecords(ourUserId, lobbyPlayerIds) {
+        async calculateHistoryRecords(ourUserId, playerId) {
+          // Initialize results
+          const results = {
+            winsAgainst: 0,
+            lossesAgainst: 0,
+            tiesAgainst: 0,
+            winsWith: 0,
+            lossesWith: 0,
+            tiesWith: 0,
+            totalMatches: 0
+          }
+          
+          if (playerId === ourUserId) return results; // Skip self
+          
           // Get all our user's matches
           const ourMatches = await this.getPlayerMatches(ourUserId);
-          
-          // Initialize results for each player in lobby
-          const results = {};
-          for (const playerId of lobbyPlayerIds) {
-            if (playerId === ourUserId) continue; // Skip self
-            
-            results[playerId] = {
-              winsAgainst: 0,
-              lossesAgainst: 0,
-              tiesAgainst: 0,
-              winsWith: 0,
-              lossesWith: 0,
-              tiesWith: 0,
-              totalMatches: 0
-            };
-          }
 
           // Process each match
           for (const match of ourMatches) {
-            // Check each player in the lobby
-            for (const playerId of lobbyPlayerIds) {
-              if (playerId === ourUserId) continue;
+            const wasTeammate = match.teammates.includes(playerId);
+            const wasOpponent = match.opponents.includes(playerId);
 
-              const wasTeammate = match.teammates.includes(playerId);
-              const wasOpponent = match.opponents.includes(playerId);
-
-              if (wasTeammate) {
-                // Same team - count as "with"
-                results[playerId].totalMatches++;
-                
-                if (match.result === 'win') results[playerId].winsWith++;
-                else if (match.result === 'loss') results[playerId].lossesWith++;
-                else results[playerId].tiesWith++;
-              } 
-              else if (wasOpponent) {
-                // Opposing team - count as "against"
-                results[playerId].totalMatches++;
-                
-                if (match.result === 'win') results[playerId].winsAgainst++;
-                else if (match.result === 'loss') results[playerId].lossesAgainst++;
-                else results[playerId].tiesAgainst++;
-              }
+            if (wasTeammate) {
+              // Same team - count as "with"
+              results.totalMatches++;
+              
+              if (match.result === 'win') results.winsWith++;
+              else if (match.result === 'loss') results.lossesWith++;
+              else results.tiesWith++;
+            } 
+            else if (wasOpponent) {
+              // Opposing team - count as "against"
+              results.totalMatches++;
+              
+              if (match.result === 'win') results.winsAgainst++;
+              else if (match.result === 'loss') results.lossesAgainst++;
+              else results.tiesAgainst++;
             }
           }
 
           return results;
         }
+
+        // Get a lobby player by ID
+        async getLobbyPlayer(playerId) {
+          const tx = this.db.transaction('lobby', 'readonly');
+          const store = tx.objectStore('lobby');
+          return new Promise((resolve, reject) => {
+            const request = store.get(playerId);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+        }
       
-        // Get players by team (CT or T) - sorted by damageOrScore
+        // Get players by team (CT or T) - sorted by damage
         async getLobbyPlayersByTeam(team) {
           return new Promise((resolve, reject) => {
             const tx = this.db.transaction('lobby', 'readonly');
@@ -345,8 +261,8 @@
             const request = index.getAll(team);
 
             request.onsuccess = () => {
-              // Sort by damageOrScore in descending order (highest first)
-              const players = request.result.sort((a, b) => b.damageOrScore - a.damageOrScore);
+              // Sort by damage in descending order (highest first)
+              const players = request.result.sort((a, b) => b.damage - a.damage);
               resolve(players);
             };
             request.onerror = () => reject(request.error);
@@ -378,7 +294,7 @@
       }
 
       // App variables
-      const steamUserId = '76561198300127244';
+      var steamUserId;
       var cs2TrackerDB = new CS2TrackerDB();
 
       // App functions
@@ -424,33 +340,88 @@
         return false;
       }
 
-      async function renderTeamList(team){
-        let container = `${team}-container`
-        const players = await cs2TrackerDB.getLobbyPlayersByTeam(team);
-        // console.log(`${team} Team:`, players);
-        // const otherPlayers = [...ctPlayers, ...tPlayers].filter(p => p !== steamUserId)
-        // console.log(otherPlayers)
-        // const records = await db.calculateLobbyRecords(steamUserId, otherPlayers);
+      function getWinRateClass(winRate) {
+          if (winRate >= 55) return 'high';
+          if (winRate <= 45) return 'low';
+          return 'neutral';
       }
 
-      function handleMatchInfoUpdate(event){
+      function getRecordClass(wins, losses) {
+          if (wins > losses) return 'stat-positive';
+          if (losses > wins) return 'stat-negative';
+          return 'stat-neutral';
+      }
+
+      function createPlayerRow(player) {
+          const { winsAgainst, lossesAgainst, winsWith, lossesWith } = player.records;
+          
+          // Calculate win rates
+          const againstTotal = winsAgainst + lossesAgainst;
+          const withTotal = winsWith + lossesWith;
+          const againstWinRate = againstTotal > 0 ? ((winsAgainst / againstTotal) * 100).toFixed(0) : 0;
+          const withWinRate = withTotal > 0 ? ((winsWith / withTotal) * 100).toFixed(0) : 0;
+
+          // Determine classes
+          const againstClass = getRecordClass(winsAgainst, lossesAgainst);
+          const withClass = getRecordClass(winsWith, lossesWith);
+          const againstWrClass = getWinRateClass(againstWinRate);
+          const withWrClass = getWinRateClass(withWinRate);
+
+          return `
+              <tr>
+                  <td><span class="player-name">${player.name}</span></td>
+                  <td class="text-center"><span class="score">${player.damage}</span></td>
+                  <td class="text-center">
+                      <span class="record ${againstClass}">${winsAgainst}W - ${lossesAgainst}L</span>
+                  </td>
+                  <td class="text-center">
+                      <span class="winrate ${againstWrClass}">${againstWinRate}%</span>
+                  </td>
+                  <td class="text-center">
+                      <span class="record ${withClass}">${winsWith}W - ${lossesWith}L</span>
+                  </td>
+                  <td class="text-center">
+                      <span class="winrate ${withWrClass}">${withWinRate}%</span>
+                  </td>
+              </tr>
+          `;
+      }
+
+      async function renderTeam(team){
+        const tbody = document.getElementById(`${team}-players`);
+        const players = await cs2TrackerDB.getLobbyPlayersByTeam(team);
+        if (players.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No players in this team</td></tr>';
+            return;
+        }
+        tbody.innerHTML = players.map(player => createPlayerRow(player)).join('');
+      }
+
+      async function handleMatchInfoUpdate(event){
         if(event.feature == 'match_info'){
           let matchInfo = event.info?.match_info
           if(matchInfo){
             let matchInfoKey = Object.keys(matchInfo)[0]
+            let matchInfoValue = matchInfo[matchInfoKey]
             if(matchInfoKey.startsWith('roster_')){
-              let rosterInfo = matchInfo[matchInfoKey]
+              let rosterInfo = matchInfoValue
               if(rosterInfo != 'null'){
                 rosterInfo = JSON.parse(rosterInfo)
                 if(rosterInfo['steamid'] != '0' && rosterInfo['team']){
-                  let player = {playerId: rosterInfo['steamid'], team: rosterInfo['team'], name: rosterInfo['nickname'], damageOrScore: rosterInfo['damange'] || rosterInfo['score']}
-                  cs2TrackerDB.addLobbyPlayer(player)
-                  renderTeamList(rosterInfo['team'])
+                  let player = {playerId: rosterInfo['steamid'], team: rosterInfo['team'], name: rosterInfo['nickname'], damage: rosterInfo['damage'] || 0}
+                  const existingPlayer = await cs2TrackerDB.getLobbyPlayer(player.playerId);
+                  player.records = existingPlayer && existingPlayer.records ? existingPlayer.records : await cs2TrackerDB.calculateHistoryRecords(steamUserId, player);
+                  await cs2TrackerDB.addLobbyPlayer(player)
+                  renderTeam(rosterInfo['team'])
                 }
               }
             }
-            else if(matchInfoKey == 'pseudo_match_id' && Boolean(matchInfo[matchInfoKey])){
+            else if(matchInfoKey == 'pseudo_match_id' && Boolean(matchInfoValue) && matchInfoValue != 'null'){
               cs2TrackerDB.clearLobby()
+            }
+            else if(matchInfoKey == 'game_mode' && Boolean(matchInfoValue) && matchInfoValue != 'null'){
+              let status = document.getElementById('status')
+              status.textContent = matchInfoValue
             }
           }
         }
@@ -474,15 +445,123 @@
         }
       }
 
-      document.addEventListener("DOMContentLoaded", async function(){
-        // Initialize db
-        await cs2TrackerDB.init();
+      function fetchUserHistory(){
+        // get total seasons
+        fetch(`https://api.tracker.gg/api/v2/cs2/standard/profile/steam/${steamUserId}`, {
+          "headers": getTrackerHeaders(),
+          "referrer": "https://tracker.gg/",
+          "body": null,
+          "method": "GET",
+        })
+        .then(r => r.json())
+        .then(r => {
+          let seasonIds = r['data']['metadata']['premierSeasons'].map(season => season.id)
+          let promises = []
+          seasonIds.forEach(seasonId => {
+            let promise = fetch(`https://api.tracker.gg/api/v2/cs2/standard/profile/steam/${steamUserId}/segments/season?playlist=premier&seasonId=${seasonId}`, {
+              "headers": getTrackerHeaders(),
+              "referrer": "https://tracker.gg/",
+              "body": null,
+              "method": "GET",
+            })
+            .then(r => r.json())
+            promises.push(promise)
+          });
+          Promise.all(promises).then(responses => {
+            let totalMatches = 0
+            responses.forEach(r => {
+              let season = r['data'].find(d => d['type'] === 'season')
+              totalMatches += season['stats']['matchesPlayed']['value']
+            });
+            let numberOfPages = Math.ceil(totalMatches / 20)
+            // scan all matches of player
+            let promises = []
+            for (let page = 0; page <= numberOfPages; page++) {
+              let promise = fetch(`https://api.tracker.gg/api/v2/cs2/standard/matches/steam/${steamUserId}?type=premier&season=&mode=all&next=${page}`, {
+                "headers": getTrackerHeaders(),
+                "referrer": "https://tracker.gg/",
+                "body": null,
+                "method": "GET",
+              })
+              .then(r => r.json())
+              promises.push(promise);
+            }
+            // accumulate counter once all promises resolved
+            Promise.all(promises).then(async (matchesResponses) => {
+              let matchIds = []
+              matchesResponses.forEach(matchesResponse => {
+                matchIds.push(...matchesResponse['data']['matches'].map(match => match['attributes']['id']))
+              });
+
+              const existingMatchIds = new Set(await cs2TrackerDB.getExistingMatches())
+              const newMatchIds = matchIds.filter(matchId => !existingMatchIds.has(matchId));
+              
+              let promises = []
+              newMatchIds.forEach(matchId => {
+                let promise = fetch(`https://api.tracker.gg/api/v2/cs2/standard/matches/${matchId}`, {
+                  "headers": getTrackerHeaders(),
+                  "referrer": "https://tracker.gg/",
+                  "body": null,
+                  "method": "GET",
+                })
+                .then(r => r.json())
+                promises.push(promise);
+              });
+              Promise.all(promises).then((newMatches) => {
+                newMatches.forEach(async function(newMatch){
+                  let simplifiedNewMatch = {
+                    matchId: newMatch['data']['attributes']['id'],
+                    timestamp: new Date(newMatch['data']['metadata']['timestamp']).getTime()
+                  }
+                  let teamIndexMapping = {}
+                  newMatch['data']['segments'].filter(segment => segment['type'] == 'team').forEach((segment, index) => {
+                    let teamNumber = index + 1
+                    simplifiedNewMatch[`team${teamNumber}`] = {score: segment['stats']['score']['value'], playerIds: []}
+                    teamIndexMapping[segment['attributes']['teamId']] = teamNumber
+                  })
+                  newMatch['data']['segments'].filter(segment => segment['type'] == 'player').forEach(segment => {
+                    let teamNumber = segment['attributes']['teamId']
+                    simplifiedNewMatch[`team${teamIndexMapping[teamNumber]}`].playerIds.push(segment['attributes']['id'])
+                  })
+
+                  await cs2TrackerDB.addMatch(simplifiedNewMatch);
+                })
+                console.log(`Syncing ${newMatches.length} matches`)
+              })
+            })
+          })
+        })
+      }
+
+      async function init(){
+        steamUserId = localStorage.getItem('steamUserId')
+        if(!steamUserId){
+          alert("Please enter your Steam Profile URL or ID to use the app.");
+          openSubWindow()
+          return
+        }
+        document.getElementById('open-subwindow').style.display = 'none';
+        fetchUserHistory()
+
         // Remove all listeners
         overwolf.games.onGameInfoUpdated.removeListener(handleGameInfoUpdate)
         // Initial get
         overwolf.games.getRunningGameInfo2(handleGameInfoUpdate)
         // Add listeners
         overwolf.games.onGameInfoUpdated.addListener(handleGameInfoUpdate);
+      }
+
+      window.addEventListener("storage", (event) => {
+        if(event.key == 'steamUserId'){
+          init()
+        }
+      });
+
+      document.addEventListener("DOMContentLoaded", async function(){
+        // Initialize db
+        await cs2TrackerDB.init();
+        // Initialize app
+        init()
       })
 
     </script>
@@ -529,12 +608,58 @@
       </header>
 
       <main>
-        <h1>CS2 Tracker</h1>
-        <p id="status">Waiting for game to launch...</p>
+        <div class="info-banner">
+            <h2>CS2 Tracker</h2>
+            <p id="status">Waiting for Steam Profile URL or ID...</p>
+             <div class="btn-group">
+                <button class="btn" id="open-subwindow" onclick="openSubWindow();">Enter Steam Profile URL or ID</button>
+              </div>
+        </div>
 
-        <div class="btn-group">
-          <button class="btn" id="close" onclick="closeWindow();">Close</button>
-          <button class="btn" id="open-subwindow" onclick="openSubWindow();">Open Sub-Window</button>
+        <div class="lobby-container">
+            <!-- CT Team -->
+            <div class="team-section team-ct">
+                <div class="team-header">Counter-Terrorists</div>
+                <table id="ct-table">
+                    <thead>
+                        <tr>
+                            <th>Player</th>
+                            <th class="text-center">Damage</th>
+                            <th class="text-center">All time vs Them</th>
+                            <th class="text-center">Win %</th>
+                            <th class="text-center">All time w/ Them</th>
+                            <th class="text-center">Win %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="CT-players">
+                        <tr>
+                            <td colspan="6" class="loading">No players in this team</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- T Team -->
+            <div class="team-section team-t">
+                <div class="team-header">Terrorists</div>
+                <table id="t-table">
+                    <thead>
+                        <tr>
+                            <th>Player</th>
+                            <th class="text-center">Damage</th>
+                            <th class="text-center">All time vs Them</th>
+                            <th class="text-center">Win %</th>
+                            <th class="text-center">All time w/ Them</th>
+                            <th class="text-center">Win %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="T-players">
+                        <tr>
+                            <td colspan="6" class="loading">No players in this team</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
       </main>
     </div>
