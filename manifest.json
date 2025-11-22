@@ -35,31 +35,31 @@
 		],
 		"windows":{
 			"MainWindow":{
-					"file":"Files/index.html",
-					"transparent": true,
-					"resizable": true,
-					"native_window": true,
-					"use_os_windowing": true,
-					"size": {
-						"width":1440,
-						"height":900
-						},
-					"min_size": {
-						"width":1280,
-						"height":720
+				"file":"Files/index.html",
+				"transparent": true,
+				"resizable": true,
+				"native_window": true,
+				"use_os_windowing": true,
+				"size": {
+					"width":1440,
+					"height":900
 					},
-					"disable_hardware_acceleration": true
+				"min_size": {
+					"width":1280,
+					"height":720
 				},
+				"disable_hardware_acceleration": true
+			},
 			"SubWindow":{
-					"file":"Files/subwindow.html",
-					"transparent":true,
-					"resizable":false,
-					"size":{
-						"width":720,
-						"height":500
-					},
-					"disable_hardware_acceleration": true
-				}
+				"file":"Files/subwindow.html",
+				"transparent":true,
+				"resizable":false,
+				"size":{
+					"width":720,
+					"height":500
+				},
+				"disable_hardware_acceleration": true
+			}
 		},
 		"externally_connectable": {
 			"matches": [
