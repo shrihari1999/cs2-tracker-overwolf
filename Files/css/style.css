@@ -502,6 +502,7 @@ tbody tr:last-child td {
 
 .stat-neutral {
     color: #8a8a8a;
+    font-weight: 600;
 }
 
 .winrate {

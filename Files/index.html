@@ -73,20 +73,6 @@
           }
         });
       };
-
-      function openMatchroomsModal(withOrAgainst, el){
-        const playerName = decodeURIComponent(el.dataset.name)
-        const matches = JSON.parse(el.dataset.matches)
-        if(!matches.length){
-          return
-        }
-        
-        let matchroomsModalTitle = document.getElementById('matchrooms-modal-title')
-        let matchroomsModalContent = document.getElementById('matchrooms-modal-content')
-        matchroomsModalTitle.textContent = `Matchrooms ${withOrAgainst} ${playerName}`
-        matchroomsModalContent.innerHTML = matches.map(match => `<a class="matchroom-result matchroom-result-${match.result}" href="https://tracker.gg/cs2/matches/${match.matchId}">${match.result[0].toUpperCase()}</a>`).join('')
-        MicroModal.show('matchrooms-modal')
-      };
       
       // App classes
       class CS2TrackerDB {
@@ -327,6 +313,26 @@
         }
       }
 
+      function openCSWatch(playerId){
+        if(playerId != steamUserId){
+          window.open(`https://cswatch.in/player/${playerId}`)
+        }
+      }
+
+      function openMatchroomsModal(withOrAgainst, el){
+        const playerName = decodeURIComponent(el.dataset.name)
+        const matches = JSON.parse(el.dataset.matches)
+        if(!matches.length){
+          return
+        }
+        
+        let matchroomsModalTitle = document.getElementById('matchrooms-modal-title')
+        let matchroomsModalContent = document.getElementById('matchrooms-modal-content')
+        matchroomsModalTitle.textContent = `Matchrooms ${withOrAgainst} ${playerName}`
+        matchroomsModalContent.innerHTML = matches.map(match => `<a class="matchroom-result matchroom-result-${match.result}" href="https://tracker.gg/cs2/matches/${match.matchId}">${match.result[0].toUpperCase()}</a>`).join('')
+        MicroModal.show('matchrooms-modal')
+      };
+
       async function setRequiredFeatures() {
         let tries = 1;
         let result;
@@ -364,6 +370,7 @@
       function getRecordClass(wins, losses) {
           if (wins > losses) return 'stat-positive';
           if (losses > wins) return 'stat-negative';
+          if (wins === losses === 0) return '';
           return 'stat-neutral';
       }
 
@@ -387,7 +394,7 @@
 
           return `
               <tr>
-                  <td><span class="player-name">${player.name}</span></td>
+                  <td onclick="openCSWatch('${player.playerId}')"><span class="player-name">${player.name}</span></td>
                   <td class="text-center"><span class="score">${player.damage}</span></td>
                   <td class="text-center" onclick="openMatchroomsModal('against', this);" data-name='${encodedPlayerName}' data-matches='${againstJson}'>
                       <span class="record ${againstClass}">${winsAgainst}W - ${lossesAgainst}L</span>
