@@ -313,6 +313,33 @@
         }
       }
 
+      async function getPlayHours(playerId) {
+        const url =
+          "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?" +
+          new URLSearchParams({
+            key: '440D7F4D810EF9298D25EDDF37C1F902',
+            steamid: playerId,
+            "appids_filter[0]": "730"
+          });
+
+        const res = await fetch(url);
+        if (!res.ok) {
+          throw new Error(`Steam API error: ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        const game = data?.response?.games?.[0];
+        if (!game || typeof game.playtime_forever !== "number") {
+          // profile private or CS2 not owned
+          return 0;
+        }
+
+        // Steam returns minutes → convert to hours
+        return Math.round(game.playtime_forever / 60);
+      }
+
+
       function openCSWatch(playerId){
         if(playerId != steamUserId){
           window.open(`https://cswatch.in/player/${playerId}`)
@@ -370,7 +397,7 @@
       function getRecordClass(wins, losses) {
           if (wins > losses) return 'stat-positive';
           if (losses > wins) return 'stat-negative';
-          if (wins === losses === 0) return '';
+          if (wins === 0 && losses === 0) return '';
           return 'stat-neutral';
       }
 
@@ -395,7 +422,7 @@
           return `
               <tr>
                   <td onclick="openCSWatch('${player.playerId}')"><span class="player-name">${player.name}</span></td>
-                  <td class="text-center"><span class="score">${player.damage}</span></td>
+                  <td class="text-center"><span id="hours-${player.playerId}" class="score">${player.hours}</span></td>
                   <td class="text-center" onclick="openMatchroomsModal('against', this);" data-name='${encodedPlayerName}' data-matches='${againstJson}'>
                       <span class="record ${againstClass}">${winsAgainst}W - ${lossesAgainst}L</span>
                   </td>
@@ -436,6 +463,7 @@
                   let player = {playerId: rosterInfo['steamid'], team: rosterInfo['team'], name: rosterInfo['nickname'], damage: rosterInfo['damage'] || 0}
                   const existingPlayer = await cs2TrackerDB.getLobbyPlayer(player.playerId);
                   player.records = existingPlayer && existingPlayer.records ? existingPlayer.records : await cs2TrackerDB.calculateHistoryRecords(steamUserId, player.playerId);
+                  player.hours = existingPlayer && existingPlayer.hours ? existingPlayer.hours : await getPlayHours(player.playerId);
                   await cs2TrackerDB.addLobbyPlayer(player)
                   renderTeam(rosterInfo['team'])
                 }
@@ -662,7 +690,7 @@
                     <thead>
                         <tr>
                             <th>Player</th>
-                            <th class="text-center">Damage</th>
+                            <th class="text-center">Hours</th>
                             <th class="text-center">All time vs Them</th>
                             <th class="text-center">Win %</th>
                             <th class="text-center">All time w/ Them</th>
@@ -684,7 +712,7 @@
                     <thead>
                         <tr>
                             <th>Player</th>
-                            <th class="text-center">Damage</th>
+                            <th class="text-center">Hours</th>
                             <th class="text-center">All time vs Them</th>
                             <th class="text-center">Win %</th>
                             <th class="text-center">All time w/ Them</th>

@@ -63,7 +63,8 @@
 		},
 		"externally_connectable": {
 			"matches": [
-				"https://*.tracker.gg"
+				"https://*.tracker.gg",
+				"https://*.steampowered.com"
 			]
 		}
 	}
