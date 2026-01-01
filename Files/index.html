@@ -493,7 +493,7 @@
         const tbody = document.getElementById(`${team}-players`);
         const players = await cs2TrackerDB.getLobbyPlayersByTeam(team);
         if (players.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No players in this team</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No players in this team</td></tr>';
             return;
         }
         tbody.innerHTML = players.map(player => createPlayerRow(player)).join('');
@@ -752,7 +752,7 @@
                     </thead>
                     <tbody id="CT-players">
                         <tr>
-                            <td colspan="6" class="loading">No players in this team</td>
+                            <td colspan="8" class="loading">No players in this team</td>
                         </tr>
                     </tbody>
                 </table>
@@ -776,7 +776,7 @@
                     </thead>
                     <tbody id="T-players">
                         <tr>
-                            <td colspan="6" class="loading">No players in this team</td>
+                            <td colspan="8" class="loading">No players in this team</td>
                         </tr>
                     </tbody>
                 </table>
