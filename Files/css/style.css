@@ -467,12 +467,14 @@ td {
     border-bottom: 1px solid #2a2a2a;
 }
 
-th:nth-child(1), td:nth-child(1) { width: 25%; }  /* Player name */
-th:nth-child(2), td:nth-child(2) { width: 12%; }  /* Damage */
-th:nth-child(3), td:nth-child(3) { width: 18%; border-left: 1px solid grey; }  /* All time vs */
-th:nth-child(4), td:nth-child(4) { width: 10%; }  /* Win % */
-th:nth-child(5), td:nth-child(5) { width: 18%; }  /* All time with */
+th:nth-child(1), td:nth-child(1) { width: 22%; }  /* Player name */
+th:nth-child(2), td:nth-child(2) { width: 10%; border-left: 1px solid grey; }  /* Hours */
+th:nth-child(3), td:nth-child(3) { width: 10%; }  /* Time to Damage */
+th:nth-child(4), td:nth-child(4) { width: 10%; }  /* Pre-aim Degree */
+th:nth-child(5), td:nth-child(5) { width: 14%; border-left: 1px solid grey; }  /* All time vs */
 th:nth-child(6), td:nth-child(6) { width: 10%; }  /* Win % */
+th:nth-child(7), td:nth-child(7) { width: 14%; }  /* All time with */
+th:nth-child(8), td:nth-child(8) { width: 10%; }  /* Win % */
 
 tbody tr:last-child td {
     border-bottom: none;

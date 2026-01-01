@@ -339,6 +339,43 @@
         return Math.round(game.playtime_forever / 60);
       }
 
+      function getTimeToDamageClass(ttd) {
+          if(ttd > 550) return 'stat-positive';
+          if(ttd > 500) return 'stat-neutral';
+          return 'stat-negative';
+      }
+
+      function getPreAimClass(preaim) {
+          if(preaim > 7) return 'stat-positive';
+          if(preaim > 5) return 'stat-neutral';
+          return 'stat-negative';
+      }
+
+      async function getLeetifyStats(playerId) {
+        const url =
+          "https://api-public.cs-prod.leetify.com/v3/profile?" +
+          new URLSearchParams({
+            steam64_id: playerId,
+          });
+
+        const res = await fetch(url);
+        if (!res.ok) {
+          throw new Error(`Leetify API error: ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        if(!data.stats){
+          return {}
+        }
+        
+        let stats = {
+          reaction_time_ms: Math.round(data.stats.reaction_time_ms),
+          preaim: Math.round(data.stats.preaim)
+        }
+        
+        return stats
+      }
 
       function openCSWatch(playerId){
         if(playerId != steamUserId){
@@ -418,11 +455,24 @@
           const withClass = getRecordClass(winsWith, lossesWith);
           const againstWrClass = getWinRateClass(winsAgainst, lossesAgainst, againstWinRate);
           const withWrClass = getWinRateClass(winsWith, lossesWith, withWinRate);
+          
+          const timeToDamage = player.leetifyStats?.reaction_time_ms
+          const timeToDamageClass = getTimeToDamageClass(timeToDamage)
+          const preaim = player.leetifyStats?.preaim
+          const preaimClass = getPreAimClass(preaim)
 
           return `
               <tr>
                   <td onclick="openCSWatch('${player.playerId}')"><span class="player-name">${player.name}</span></td>
-                  <td class="text-center"><span id="hours-${player.playerId}" class="score">${player.hours}</span></td>
+                  <td class="text-center">
+                      <span class="score">${player.hours}</span>
+                  </td>
+                  <td class="text-center">
+                      <span class="${timeToDamageClass}">${timeToDamage}</span>
+                  </td>
+                  <td class="text-center">
+                      <span class="${preaimClass}">${preaim}</span>
+                  </td>
                   <td class="text-center" onclick="openMatchroomsModal('against', this);" data-name='${encodedPlayerName}' data-matches='${againstJson}'>
                       <span class="record ${againstClass}">${winsAgainst}W - ${lossesAgainst}L</span>
                   </td>
@@ -464,6 +514,7 @@
                   const existingPlayer = await cs2TrackerDB.getLobbyPlayer(player.playerId);
                   player.records = existingPlayer && existingPlayer.records ? existingPlayer.records : await cs2TrackerDB.calculateHistoryRecords(steamUserId, player.playerId);
                   player.hours = existingPlayer && existingPlayer.hours ? existingPlayer.hours : await getPlayHours(player.playerId);
+                  player.leetifyStats = existingPlayer && existingPlayer.leetifyStats ? existingPlayer.leetifyStats : await getLeetifyStats(player.playerId);
                   await cs2TrackerDB.addLobbyPlayer(player)
                   renderTeam(rosterInfo['team'])
                 }
@@ -691,6 +742,8 @@
                         <tr>
                             <th>Player</th>
                             <th class="text-center">Hours</th>
+                            <th class="text-center">TTD</th>
+                            <th class="text-center">Preaim °</th>
                             <th class="text-center">All time vs Them</th>
                             <th class="text-center">Win %</th>
                             <th class="text-center">All time w/ Them</th>
@@ -713,6 +766,8 @@
                         <tr>
                             <th>Player</th>
                             <th class="text-center">Hours</th>
+                            <th class="text-center">TTD</th>
+                            <th class="text-center">Preaim °</th>
                             <th class="text-center">All time vs Them</th>
                             <th class="text-center">Win %</th>
                             <th class="text-center">All time w/ Them</th>
