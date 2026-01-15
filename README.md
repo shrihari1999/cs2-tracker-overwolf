@@ -2,6 +2,8 @@
 
 A Counter-Strike 2 overlay application built for Overwolf that provides real-time match history and player statistics for your current lobby.
 
+<img width="1413" height="876" alt="image" src="https://github.com/user-attachments/assets/57131b04-191a-490e-a4ee-bef0ac343d12" />
+
 ## Features
 
 - **Real-Time Lobby Detection**: Automatically detects players in your CS2 lobby as they join
