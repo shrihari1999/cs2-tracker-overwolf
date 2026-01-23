@@ -340,12 +340,14 @@
       }
 
       function getTimeToDamageClass(ttd) {
+          if(ttd === '-') return ''
           if(ttd > 575) return 'stat-positive';
           if(ttd > 500) return 'stat-neutral';
           return 'stat-negative';
       }
 
       function getPreAimClass(preaim) {
+          if(preaim === '-') return ''
           if(preaim > 7) return 'stat-positive';
           if(preaim > 5) return 'stat-neutral';
           return 'stat-negative';
@@ -360,13 +362,13 @@
 
         const res = await fetch(url);
         if (!res.ok) {
-          throw new Error(`Leetify API error: ${res.status}`);
+          return {reaction_time_ms: '-', preaim: '-'}
         }
 
         const data = await res.json();
 
         if(!data.stats){
-          return {}
+          return {reaction_time_ms: '-', preaim: '-'}
         }
         
         let stats = {
