@@ -76,7 +76,7 @@
       
       // App classes
       class CS2TrackerDB {
-        constructor(dbName = 'CS2TrackerDB', version = 1) {
+        constructor(dbName = 'CS2TrackerDB', version = 2) {
           this.dbName = dbName;
           this.version = version;
           this.db = null;
@@ -114,6 +114,11 @@
                 const lobbyStore = db.createObjectStore('lobby', { keyPath: 'playerId' });
                 lobbyStore.createIndex('team', 'team', { unique: false });
               }
+
+              // Store 4: Settings
+              if (!db.objectStoreNames.contains('settings')) {
+                db.createObjectStore('settings', { keyPath: 'key' });
+              }
             };
           });
         }
@@ -132,8 +137,9 @@
 
         // Add a match and create denormalized records
         async addMatch(matchData) {
+          console.log('addMatch called with:', matchData.matchId);
           const { matchId, timestamp, team1, team2 } = matchData;
-          
+
           // Determine result
           let team1Result, team2Result;
           if (team1.score > team2.score) {
@@ -145,15 +151,20 @@
           } else {
             team1Result = team2Result = 'tie';
           }
+          console.log('Result determined:', team1Result, team2Result);
 
           const tx = this.db.transaction(['matches', 'playerMatches'], 'readwrite');
-          
+          console.log('Transaction created');
+
           // Store raw match
-          tx.objectStore('matches').add(matchData);
+          const matchRequest = tx.objectStore('matches').add(matchData);
+          matchRequest.onsuccess = () => console.log('Match add request succeeded');
+          matchRequest.onerror = (e) => console.error('Match add request failed:', e.target.error);
 
           const pmStore = tx.objectStore('playerMatches');
 
           // Create denormalized records for team1 players
+          console.log('Adding team1 players:', team1.playerIds);
           for (const playerId of team1.playerIds) {
             pmStore.add({
               id: `${playerId}_${matchId}`,
@@ -167,6 +178,7 @@
           }
 
           // Create denormalized records for team2 players
+          console.log('Adding team2 players:', team2.playerIds);
           for (const playerId of team2.playerIds) {
             pmStore.add({
               id: `${playerId}_${matchId}`,
@@ -180,8 +192,18 @@
           }
 
           return new Promise((resolve, reject) => {
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => reject(tx.error);
+            tx.oncomplete = () => {
+              console.log('Transaction completed successfully for:', matchId);
+              resolve();
+            };
+            tx.onerror = () => {
+              console.error('Transaction error for:', matchId, tx.error);
+              reject(tx.error);
+            };
+            tx.onabort = () => {
+              console.error('Transaction aborted for:', matchId, tx.error);
+              reject(tx.error);
+            };
           });
         }
 
@@ -291,6 +313,39 @@
             tx.onerror = () => reject(tx.error);
           });
         }
+
+        // Clear all matches and player matches (for source change re-sync)
+        async clearAllMatches() {
+          return new Promise((resolve, reject) => {
+            const tx = this.db.transaction(['matches', 'playerMatches'], 'readwrite');
+            tx.objectStore('matches').clear();
+            tx.objectStore('playerMatches').clear();
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+          });
+        }
+
+        // Get data source setting
+        async getDataSource() {
+          return new Promise((resolve, reject) => {
+            const tx = this.db.transaction('settings', 'readonly');
+            const store = tx.objectStore('settings');
+            const request = store.get('dataSource');
+            request.onsuccess = () => resolve(request.result?.value || 'tracker');
+            request.onerror = () => reject(request.error);
+          });
+        }
+
+        // Set data source setting
+        async setDataSource(source) {
+          return new Promise((resolve, reject) => {
+            const tx = this.db.transaction('settings', 'readwrite');
+            const store = tx.objectStore('settings');
+            store.put({ key: 'dataSource', value: source });
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+          });
+        }
       }
 
       // App variables
@@ -385,17 +440,25 @@
         }
       }
 
-      function openMatchroomsModal(withOrAgainst, el){
+      async function openMatchroomsModal(withOrAgainst, el){
         const playerName = decodeURIComponent(el.dataset.name)
         const matches = JSON.parse(el.dataset.matches)
         if(!matches.length){
           return
         }
-        
+
+        const dataSource = await cs2TrackerDB.getDataSource();
+        const getMatchUrl = (matchId) => {
+          if (dataSource === 'csstats') {
+            return `https://csstats.gg/match/${matchId}`;
+          }
+          return `https://tracker.gg/cs2/matches/${matchId}`;
+        };
+
         let matchroomsModalTitle = document.getElementById('matchrooms-modal-title')
         let matchroomsModalContent = document.getElementById('matchrooms-modal-content')
         matchroomsModalTitle.textContent = `Matchrooms ${withOrAgainst} ${playerName}`
-        matchroomsModalContent.innerHTML = matches.map(match => `<a class="matchroom-result matchroom-result-${match.result}" href="https://tracker.gg/cs2/matches/${match.matchId}">${match.result[0].toUpperCase()}</a>`).join('')
+        matchroomsModalContent.innerHTML = matches.map(match => `<a class="matchroom-result matchroom-result-${match.result}" href="${getMatchUrl(match.matchId)}">${match.result[0].toUpperCase()}</a>`).join('')
         MicroModal.show('matchrooms-modal')
       };
 
@@ -536,7 +599,7 @@
       function handleGameInfoUpdate(event){
         let gameInfo = event.gameInfo
         let status = document.getElementById('status')
-        
+
         if(gameInfo?.isRunning){
           status.textContent = `${gameInfo?.title} is running`;
           setRequiredFeatures().then(function(success){
@@ -551,7 +614,152 @@
         }
       }
 
-      function fetchUserHistory(){
+      // Rate limiting helpers for csstats.gg
+      function extractJSObject(scriptText, idx) {
+        const start = scriptText.indexOf('{', idx);
+        let depth = 0;
+        for (let i = start; i < scriptText.length; i++) {
+          if (scriptText[i] === '{') depth++;
+          else if (scriptText[i] === '}') depth--;
+          if (depth === 0) return JSON.parse(scriptText.substring(start, i + 1));
+        }
+        return null;
+      }
+
+      async function fetchWithRetry(url, retries = 3, baseDelay = 5000) {
+        for (let attempt = 0; attempt < retries; attempt++) {
+          try {
+            const response = await fetch(url, { method: "GET", body: null });
+            if (response.ok) {
+              return await response.text();
+            }
+            if (response.status === 429 || response.status === 403) {
+              const delay = baseDelay * Math.pow(2, attempt);
+              console.warn(`Rate limited on ${url}, retrying in ${delay}ms (attempt ${attempt + 1}/${retries})`);
+              await new Promise(r => setTimeout(r, delay));
+              continue;
+            }
+            console.error(`Failed to fetch ${url}: ${response.status}`);
+            return null;
+          } catch (error) {
+            console.error(`Network error fetching ${url}:`, error);
+            if (attempt < retries - 1) {
+              await new Promise(r => setTimeout(r, baseDelay));
+            }
+          }
+        }
+        return null;
+      }
+
+      async function fetchBatchWithRateLimit(urls, batchSize = 2, delayMs = 3000, onProgress = null) {
+        const results = [];
+        for (let i = 0; i < urls.length; i += batchSize) {
+          const batch = urls.slice(i, i + batchSize);
+          const batchResults = await Promise.all(
+            batch.map(url => fetchWithRetry(url))
+          );
+          results.push(...batchResults);
+          if (onProgress) {
+            onProgress(results.length, urls.length);
+          }
+          if (i + batchSize < urls.length) {
+            const jitter = Math.random() * 1000;
+            await new Promise(r => setTimeout(r, delayMs + jitter));
+          }
+        }
+        return results;
+      }
+
+      async function fetchUserHistoryFromCsStats(){
+        try {
+          const html = await fetchWithRetry(`https://csstats.gg/player/${steamUserId}/stats`);
+          if (!html) {
+            console.error('Failed to fetch player stats from csstats.gg');
+            return;
+          }
+
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          const scripts = doc.querySelectorAll('script')
+
+          for (let i = 0; i < scripts.length; i++) {
+            const script = scripts[i];
+            const idx = script.textContent.indexOf('var stats =')
+            if(idx !== -1){
+              let stats = extractJSObject(script.textContent, idx)
+              let matchIds = stats.matches
+              const existingMatchIds = new Set(await cs2TrackerDB.getExistingMatches())
+              const newMatchIds = matchIds.filter(matchId => !existingMatchIds.has(matchId));
+
+              if (newMatchIds.length === 0) {
+                console.log('No new matches to sync');
+                updateSyncStatus('');
+                return;
+              }
+
+              console.log(`Syncing ${newMatchIds.length} matches from csstats.gg (rate limited)...`);
+
+              const batchSize = 3;
+              const delayMs = 2000;
+              let syncedCount = 0;
+
+              for (let i = 0; i < newMatchIds.length; i += batchSize) {
+                const batchMatchIds = newMatchIds.slice(i, i + batchSize);
+                const batchUrls = batchMatchIds.map(matchId => `https://csstats.gg/match/${matchId}`);
+
+                // Fetch batch
+                updateSyncStatus(`Fetching ${Math.min(i + batchSize, newMatchIds.length)}/${newMatchIds.length} matches...`);
+                const batchResults = await Promise.all(batchUrls.map(url => fetchWithRetry(url)));
+
+                // Process and save each match in the batch immediately
+                for (let j = 0; j < batchResults.length; j++) {
+                  const newMatchHtml = batchResults[j];
+                  if (!newMatchHtml) continue;
+
+                  const matchId = batchMatchIds[j];
+                  const matchDoc = new DOMParser().parseFromString(newMatchHtml, 'text/html');
+                  let dateStr = matchDoc.querySelector('#last-info .info span:nth-child(2)')
+                  let playerLinks = matchDoc.getElementsByClassName('player-link')
+
+                  let simplifiedNewMatch = {
+                    matchId: matchId,
+                    timestamp: dateStr ? new Date(dateStr.textContent.replace(/(\d+)(st|nd|rd|th)/, '$1')).getTime() : Date.now()
+                  }
+
+                  for (let t = 0; t < 2; t++) {
+                    let playerLinkGroup = Array.from(playerLinks).slice(t*5, (t+1)*5)
+                    let playerIds = playerLinkGroup.map(link => link.href.split('player/')[1])
+                    let scoreEl = matchDoc.querySelector(`.team-${t}-score`)
+                    let score = scoreEl ? Number(scoreEl.innerText) : 0
+                    simplifiedNewMatch[`team${t+1}`] = {score: score, playerIds: playerIds}
+                  }
+
+                  try {
+                    await cs2TrackerDB.addMatch(simplifiedNewMatch);
+                    syncedCount++;
+                    updateSyncStatus(`Synced ${syncedCount}/${newMatchIds.length} matches...`);
+                    updateMatchCount();
+                  } catch (err) {
+                    console.error('Failed to save match:', matchId, err);
+                  }
+                }
+
+                // Rate limit delay between batches
+                if (i + batchSize < newMatchIds.length) {
+                  const jitter = Math.random() * 1000;
+                  await new Promise(r => setTimeout(r, delayMs + jitter));
+                }
+              }
+              console.log(`Successfully synced ${syncedCount} matches from csstats.gg`);
+              updateSyncStatus('');
+            }
+          }
+        } catch (error) {
+          console.error('Error in fetchUserHistoryFromCsStats:', error);
+          updateSyncStatus('');
+        }
+      }
+
+      function fetchUserHistoryFromTracker(){
         // get total seasons
         fetch(`https://api.tracker.gg/api/v2/cs2/standard/profile/steam/${steamUserId}`, {
           "headers": getTrackerHeaders(),
@@ -561,7 +769,13 @@
         })
         .then(r => r.json())
         .then(r => {
-          let seasonIds = r['data']['metadata']['premierSeasons'].map(season => season.id)
+          let seasonIds;
+          try {
+            seasonIds = r['data']['metadata']['premierSeasons'].map(season => season.id);
+          } catch (e) {
+            console.warn('Failed to get season IDs, using defaults [1, 2, 3]');
+            seasonIds = [1, 2, 3];
+          }
           let promises = []
           seasonIds.forEach(seasonId => {
             let promise = fetch(`https://api.tracker.gg/api/v2/cs2/standard/profile/steam/${steamUserId}/segments/season?playlist=premier&seasonId=${seasonId}`, {
@@ -601,7 +815,13 @@
 
               const existingMatchIds = new Set(await cs2TrackerDB.getExistingMatches())
               const newMatchIds = matchIds.filter(matchId => !existingMatchIds.has(matchId));
-              
+
+              if (newMatchIds.length === 0) {
+                updateSyncStatus('');
+                return;
+              }
+
+              updateSyncStatus(`Syncing 0/${newMatchIds.length} matches...`);
               let promises = []
               newMatchIds.forEach(matchId => {
                 let promise = fetch(`https://api.tracker.gg/api/v2/cs2/standard/matches/${matchId}`, {
@@ -613,8 +833,9 @@
                 .then(r => r.json())
                 promises.push(promise);
               });
-              Promise.all(promises).then((newMatches) => {
-                newMatches.forEach(async function(newMatch){
+              Promise.all(promises).then(async (newMatches) => {
+                let syncedCount = 0;
+                for (const newMatch of newMatches) {
                   let simplifiedNewMatch = {
                     matchId: newMatch['data']['attributes']['id'],
                     timestamp: new Date(newMatch['data']['metadata']['timestamp']).getTime()
@@ -627,16 +848,55 @@
                   })
                   newMatch['data']['segments'].filter(segment => segment['type'] == 'player').forEach(segment => {
                     let teamNumber = segment['attributes']['teamId']
-                    simplifiedNewMatch[`team${teamIndexMapping[teamNumber]}`].playerIds.push(segment['attributes']['id'])
+                    if(teamIndexMapping[teamNumber]){
+                      simplifiedNewMatch[`team${teamIndexMapping[teamNumber]}`].playerIds.push(segment['attributes']['id'])
+                    }
                   })
 
                   await cs2TrackerDB.addMatch(simplifiedNewMatch);
-                })
-                console.log(`Syncing ${newMatches.length} matches`)
+                  syncedCount++;
+                  updateSyncStatus(`Syncing ${syncedCount}/${newMatches.length} matches...`);
+                  updateMatchCount();
+                }
+                console.log(`Syncing ${newMatches.length} matches from tracker.gg`);
+                updateSyncStatus('');
               })
             })
           })
         })
+      }
+
+      function updateSyncStatus(message) {
+        const syncStatus = document.getElementById('sync-status');
+        if (message) {
+          syncStatus.textContent = message;
+          syncStatus.style.display = 'block';
+        } else {
+          syncStatus.style.display = 'none';
+        }
+      }
+
+      async function updateMatchCount() {
+        const matchIds = await cs2TrackerDB.getExistingMatches();
+        const matchCount = document.getElementById('match-count');
+        matchCount.textContent = `${matchIds.length} matches in database`;
+      }
+
+      async function fetchUserHistory(){
+        const dataSource = await cs2TrackerDB.getDataSource();
+
+        // Check if data source changed and needs re-sync
+        if (localStorage.getItem('dataSourceChanged') === 'true') {
+          console.log('Data source changed, clearing all matches for re-sync...');
+          await cs2TrackerDB.clearAllMatches();
+          localStorage.removeItem('dataSourceChanged');
+        }
+
+        if (dataSource === 'csstats') {
+          await fetchUserHistoryFromCsStats();
+        } else {
+          fetchUserHistoryFromTracker();
+        }
       }
 
       async function init(){
@@ -647,7 +907,8 @@
           return
         }
         document.getElementById('open-subwindow').style.display = 'none';
-        fetchUserHistory()
+        updateMatchCount();
+        fetchUserHistory();
 
         // Remove all listeners
         overwolf.games.onGameInfoUpdated.removeListener(handleGameInfoUpdate)
@@ -730,6 +991,8 @@
         <div class="info-banner">
             <h2>CS2 Tracker</h2>
             <p id="status">Waiting for Steam Profile URL or ID...</p>
+            <p id="sync-status" style="display: none; font-size: 12px; color: #888;"></p>
+            <p id="match-count" style="font-size: 12px; color: #888;"></p>
             <div class="btn-group">
               <button class="btn" id="open-subwindow" onclick="openSubWindow();">Enter Steam Profile URL or ID</button>
             </div>
