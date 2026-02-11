@@ -137,7 +137,6 @@
 
         // Add a match and create denormalized records
         async addMatch(matchData) {
-          console.log('addMatch called with:', matchData.matchId);
           const { matchId, timestamp, team1, team2 } = matchData;
 
           // Determine result
@@ -151,10 +150,8 @@
           } else {
             team1Result = team2Result = 'tie';
           }
-          console.log('Result determined:', team1Result, team2Result);
 
           const tx = this.db.transaction(['matches', 'playerMatches'], 'readwrite');
-          console.log('Transaction created');
 
           // Store raw match
           const matchRequest = tx.objectStore('matches').add(matchData);
@@ -164,7 +161,6 @@
           const pmStore = tx.objectStore('playerMatches');
 
           // Create denormalized records for team1 players
-          console.log('Adding team1 players:', team1.playerIds);
           for (const playerId of team1.playerIds) {
             pmStore.add({
               id: `${playerId}_${matchId}`,
@@ -178,7 +174,6 @@
           }
 
           // Create denormalized records for team2 players
-          console.log('Adding team2 players:', team2.playerIds);
           for (const playerId of team2.playerIds) {
             pmStore.add({
               id: `${playerId}_${matchId}`,
@@ -193,7 +188,6 @@
 
           return new Promise((resolve, reject) => {
             tx.oncomplete = () => {
-              console.log('Transaction completed successfully for:', matchId);
               resolve();
             };
             tx.onerror = () => {
@@ -629,7 +623,7 @@
       async function fetchWithRetry(url, retries = 3, baseDelay = 5000) {
         for (let attempt = 0; attempt < retries; attempt++) {
           try {
-            const response = await fetch(url, { method: "GET", body: null });
+            const response = await fetch(url, { method: "GET", body: null, credentials: "include" });
             if (response.ok) {
               return await response.text();
             }
@@ -718,18 +712,33 @@
                   const matchId = batchMatchIds[j];
                   const matchDoc = new DOMParser().parseFromString(newMatchHtml, 'text/html');
                   let dateStr = matchDoc.querySelector('#last-info .info span:nth-child(2)')
-                  let playerLinks = matchDoc.getElementsByClassName('player-link')
-
                   let simplifiedNewMatch = {
                     matchId: matchId,
                     timestamp: dateStr ? new Date(dateStr.textContent.replace(/(\d+)(st|nd|rd|th)/, '$1')).getTime() : Date.now()
                   }
 
+                  // Use tbody elements for team boundaries. csstats.gg uses separate
+                  // tbodies per team (with possible separator tbodies in between).
+                  // Filter to tbodies that contain player links to skip separators.
+                  let table = matchDoc.querySelector('table.scoreboard')
+                  let teamTbodies = table
+                    ? Array.from(table.querySelectorAll('tbody')).filter(tb => tb.querySelector('.player-link'))
+                    : []
+
                   for (let t = 0; t < 2; t++) {
-                    let playerLinkGroup = Array.from(playerLinks).slice(t*5, (t+1)*5)
-                    let playerIds = playerLinkGroup.map(link => link.href.split('player/')[1])
                     let scoreEl = matchDoc.querySelector(`.team-${t}-score`)
-                    let score = scoreEl ? Number(scoreEl.innerText) : 0
+                    let score = scoreEl ? Number(scoreEl.textContent) : 0
+                    let playerIds
+
+                    if (teamTbodies.length >= 2) {
+                      let links = teamTbodies[t].querySelectorAll('.player-link')
+                      playerIds = Array.from(links).map(link => link.href.split('player/')[1])
+                    } else {
+                      // Fallback: use all player-links split by position
+                      let allLinks = Array.from(matchDoc.getElementsByClassName('player-link'))
+                      playerIds = allLinks.slice(t * 5, (t + 1) * 5).map(link => link.href.split('player/')[1])
+                    }
+
                     simplifiedNewMatch[`team${t+1}`] = {score: score, playerIds: playerIds}
                   }
 
