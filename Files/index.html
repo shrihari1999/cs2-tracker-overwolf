@@ -875,6 +875,60 @@
         })
       }
 
+      async function getTrackerMatchCount(steamId) {
+        try {
+          const res = await fetch(`https://api.tracker.gg/api/v2/cs2/standard/profile/steam/${steamId}`, {
+            headers: getTrackerHeaders(),
+            referrer: "https://tracker.gg/",
+            method: "GET",
+          });
+          const data = await res.json();
+          let seasonIds;
+          try {
+            seasonIds = data.data.metadata.premierSeasons.map(s => s.id);
+          } catch {
+            return null;
+          }
+          const responses = await Promise.all(
+            seasonIds.map(id =>
+              fetch(`https://api.tracker.gg/api/v2/cs2/standard/profile/steam/${steamId}/segments/season?playlist=premier&seasonId=${id}`, {
+                headers: getTrackerHeaders(),
+                referrer: "https://tracker.gg/",
+                method: "GET",
+              }).then(r => r.json())
+            )
+          );
+          let total = 0;
+          for (const r of responses) {
+            try {
+              const season = r.data.find(d => d.type === 'season');
+              total += season.stats.matchesPlayed.value;
+            } catch {}
+          }
+          return total;
+        } catch {
+          return null;
+        }
+      }
+
+      async function getCsStatsMatchCount(steamId) {
+        try {
+          const html = await fetchWithRetry(`https://csstats.gg/player/${steamId}/stats`);
+          if (!html) return null;
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          for (const script of doc.querySelectorAll('script')) {
+            const idx = script.textContent.indexOf('var stats =');
+            if (idx !== -1) {
+              const stats = extractJSObject(script.textContent, idx);
+              return stats?.matches?.length ?? null;
+            }
+          }
+          return null;
+        } catch {
+          return null;
+        }
+      }
+
       function updateSyncStatus(message) {
         const syncStatus = document.getElementById('sync-status');
         if (message) {

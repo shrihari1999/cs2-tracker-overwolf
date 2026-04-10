@@ -7,6 +7,7 @@
 		<script>
 			let db = null;
 			let currentDataSource = 'tracker';
+			let lastFetchedSteamId = null;
 
 			async function initDB() {
 				return new Promise((resolve, reject) => {
@@ -82,18 +83,9 @@
 					return
 				}
 
-				const steamIdPattern = /^7656119\d{10}$/;
-				if (steamIdPattern.test(steamUserInputValue)) {
-					localStorage.setItem("steamUserId", steamUserInputValue);
-					await saveDataSource();
-					closeWindow();
-					return
-				}
-
-				const steamUrlPattern = /^https?:\/\/steamcommunity\.com\/profiles\/(7656119\d{10})\/?$/;
-				const urlMatch = steamUserInputValue.match(steamUrlPattern);
-				if (urlMatch) {
-					localStorage.setItem("steamUserId", urlMatch[1]);
+				const steamId = extractSteamId(steamUserInputValue);
+				if (steamId) {
+					localStorage.setItem("steamUserId", steamId);
 					await saveDataSource();
 					closeWindow();
 					return
@@ -112,10 +104,63 @@
 				await setDataSource(selectedSource);
 			}
 
+			function extractSteamId(value) {
+				const steamIdPattern = /^7656119\d{10}$/;
+				if (steamIdPattern.test(value)) return value;
+				const steamUrlPattern = /^https?:\/\/steamcommunity\.com\/profiles\/(7656119\d{10})\/?$/;
+				const match = value.match(steamUrlPattern);
+				return match ? match[1] : null;
+			}
+
+			function updateDropdownLabels(trackerCount, csstatsCount) {
+				const select = document.getElementById('data-source-select');
+				for (const option of select.options) {
+					if (option.value === 'tracker') {
+						option.textContent = trackerCount != null ? `tracker.gg (${trackerCount} matches)` : 'tracker.gg';
+					} else if (option.value === 'csstats') {
+						option.textContent = csstatsCount != null ? `csstats.gg (${csstatsCount} matches)` : 'csstats.gg';
+					}
+				}
+			}
+
+			async function updateDataSourceState() {
+				const input = document.getElementById('steam-user-input').value.trim();
+				const select = document.getElementById('data-source-select');
+				const steamId = extractSteamId(input);
+
+				if (!steamId) {
+					select.disabled = true;
+					lastFetchedSteamId = null;
+					updateDropdownLabels(null, null);
+					return;
+				}
+
+				if (steamId === lastFetchedSteamId) return;
+
+				select.disabled = true;
+				lastFetchedSteamId = steamId;
+				updateDropdownLabels(null, null);
+
+				const mainWindow = overwolf.windows.getMainWindow();
+				const [trackerCount, csstatsCount] = await Promise.all([
+					mainWindow.getTrackerMatchCount(steamId).catch(() => null),
+					mainWindow.getCsStatsMatchCount(steamId).catch(() => null)
+				]);
+
+				if (lastFetchedSteamId !== steamId) return;
+
+				updateDropdownLabels(trackerCount, csstatsCount);
+				select.disabled = false;
+			}
+
 			document.addEventListener('DOMContentLoaded', async function(){
 				await initDB();
 				currentDataSource = await getDataSource();
 				document.getElementById('data-source-select').value = currentDataSource;
+
+				const steamInput = document.getElementById('steam-user-input');
+				steamInput.addEventListener('input', updateDataSourceState);
+				updateDataSourceState();
 			});
 		</script>
 	</head>
@@ -132,8 +177,8 @@
 
 				<h2 style="margin-top: 10px;">Data Source</h2>
 				<select id="data-source-select" class="input" style="width: 100%; padding: 10px;">
-					<option value="tracker">tracker.gg (Recommended)</option>
 					<option value="csstats">csstats.gg</option>
+					<option value="tracker">tracker.gg</option>
 				</select>
 				<button class="btn" onclick="setSteamUserId();">Submit</button>
 				<button class="btn" onclick="closeWindow();">Cancel</button>
