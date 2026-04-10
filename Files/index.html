@@ -366,7 +366,7 @@
         const url =
           "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?" +
           new URLSearchParams({
-            key: '440D7F4D810EF9298D25EDDF37C1F902',
+            key: '448EF5FD8D44DDC1C6A6B07437D20FFE',
             steamid: playerId,
             "appids_filter[0]": "730"
           });
@@ -428,9 +428,9 @@
         return stats
       }
 
-      function openCSWatch(playerId){
+      function openCSRep(playerId){
         if(playerId != steamUserId){
-          window.open(`https://cswatch.in/player/${playerId}`)
+          window.open(`https://csrep.gg/player/${playerId}`)
         }
       }
 
@@ -522,7 +522,7 @@
 
           return `
               <tr>
-                  <td onclick="openCSWatch('${player.playerId}')"><span class="player-name">${player.name}</span></td>
+                  <td onclick="openCSRep('${player.playerId}')"><span class="player-name">${player.name}</span></td>
                   <td class="text-center">
                       <span class="score">${player.hours}</span>
                   </td>

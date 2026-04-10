@@ -14,7 +14,7 @@ A Counter-Strike 2 overlay application built for Overwolf that provides real-tim
   - Win/Loss records vs opponents
   - Win/Loss records with teammates
   - Win rate percentages
-- **External Integration**: Click player names to view detailed stats on CSWatch
+- **External Integration**: Click player names to view detailed stats on CSRep
 - **Match Details**: View specific matchrooms on Tracker.gg by clicking on W/L records
 - **Auto-Sync**: Automatically syncs your CS2 match history from Tracker.gg
 
@@ -52,7 +52,7 @@ The app will then sync your match history from Tracker.gg.
 
 ### Interactions
 
-- **Click on player names**: Opens their CSWatch profile
+- **Click on player names**: Opens their CSRep profile
 - **Click on W-L records**: Shows all matchrooms for games played against/with that player
 
 ## Technical Details
@@ -95,6 +95,7 @@ Stats are color-coded for quick readability:
 - Match history syncs automatically when the app starts
 - Lobby data is cleared when a new match begins
 - Player stats are cached to reduce API calls
+- If you don't have a Steam API key, you can look for on on github by searching ```(api.steampowered.com AND ?key=4) AND NOT (440D7F4D810EF9298D25EDDF37C1F902)```
 
 ## Author
 
