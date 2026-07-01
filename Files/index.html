@@ -76,7 +76,7 @@
       
       // App classes
       class CS2TrackerDB {
-        constructor(dbName = 'CS2TrackerDB', version = 2) {
+        constructor(dbName = 'CS2TrackerDB', version = 3) {
           this.dbName = dbName;
           this.version = version;
           this.db = null;
@@ -118,6 +118,11 @@
               // Store 4: Settings
               if (!db.objectStoreNames.contains('settings')) {
                 db.createObjectStore('settings', { keyPath: 'key' });
+              }
+
+              // Store 5: Curated pro player Leetify stats (reaction time / preaim)
+              if (!db.objectStoreNames.contains('proStats')) {
+                db.createObjectStore('proStats', { keyPath: 'playerId' });
               }
             };
           });
@@ -340,6 +345,55 @@
             tx.onerror = () => reject(tx.error);
           });
         }
+
+        // Generic settings getter/setter
+        async getSetting(key, defaultValue = null) {
+          return new Promise((resolve, reject) => {
+            const tx = this.db.transaction('settings', 'readonly');
+            const store = tx.objectStore('settings');
+            const request = store.get(key);
+            request.onsuccess = () => resolve(request.result ? request.result.value : defaultValue);
+            request.onerror = () => reject(request.error);
+          });
+        }
+
+        async setSetting(key, value) {
+          return new Promise((resolve, reject) => {
+            const tx = this.db.transaction('settings', 'readwrite');
+            const store = tx.objectStore('settings');
+            store.put({ key, value });
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+          });
+        }
+
+        // Pro player stats (reaction time / preaim)
+        async saveProStats(record) {
+          return new Promise((resolve, reject) => {
+            const tx = this.db.transaction('proStats', 'readwrite');
+            tx.objectStore('proStats').put(record);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+          });
+        }
+
+        async getProStats(playerId) {
+          return new Promise((resolve, reject) => {
+            const tx = this.db.transaction('proStats', 'readonly');
+            const request = tx.objectStore('proStats').get(playerId);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+        }
+
+        async getAllProStats() {
+          return new Promise((resolve, reject) => {
+            const tx = this.db.transaction('proStats', 'readonly');
+            const request = tx.objectStore('proStats').getAll();
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+        }
       }
 
       // App variables
@@ -371,21 +425,20 @@
             "appids_filter[0]": "730"
           });
 
-        const res = await fetch(url);
-        if (!res.ok) {
-          throw new Error(`Steam API error: ${res.status}`);
+        try {
+          const res = await fetch(url);
+          if (!res.ok) {
+            return '-';
+          }
+          const data = await res.json();
+          const game = data?.response?.games?.[0];
+          if (!game || typeof game.playtime_forever !== "number") {
+            return 0;
+          }
+          return Math.round(game.playtime_forever / 60);
+        } catch (err) {
+          return '-';
         }
-
-        const data = await res.json();
-
-        const game = data?.response?.games?.[0];
-        if (!game || typeof game.playtime_forever !== "number") {
-          // profile private or CS2 not owned
-          return 0;
-        }
-
-        // Steam returns minutes → convert to hours
-        return Math.round(game.playtime_forever / 60);
       }
 
       function getTimeToDamageClass(ttd) {
@@ -424,13 +477,103 @@
           reaction_time_ms: Math.round(data.stats.reaction_time_ms),
           preaim: Math.round(data.stats.preaim)
         }
-        
+
         return stats
+      }
+
+      // Curated pro players we track Leetify reaction time / preaim for.
+      const PRO_PLAYERS = [
+        { playerId: '76561198083485506', name: 'woxic' },
+        { playerId: '76561198081484775', name: 'sh1ro' },
+        { playerId: '76561198355739212', name: 'torzsi' },
+        { playerId: '76561198855375325', name: 'Jimpphat' },
+        { playerId: '76561198309839541', name: 'SunPayus' },
+        { playerId: '76561198164970560', name: 'yuurih' },
+        { playerId: '76561198050250233', name: 'iM' },
+        { playerId: '76561199063068840', name: 'w0nderful' },
+        { playerId: '76561198113666193', name: 'ZywOo' },
+        { playerId: '76561197973140692', name: 'mezii' },
+        { playerId: '76561198041683378', name: 'NiKo' },
+        { playerId: '76561198074762801', name: 'm0NESY' },
+        { playerId: '76561198016255205', name: 'Twistzz' },
+        { playerId: '76561197991272318', name: 'ropz' },
+        { playerId: '76561198386265483', name: 'donk' },
+        { playerId: '76561198068002993', name: 'HeavyGod' },
+        { playerId: '76561198044118796', name: 'XANTARES' },
+        { playerId: '76561198068422762', name: 'frozen' },
+        { playerId: '76561197996678278', name: 'TeSeS' },
+        { playerId: '76561198146207066', name: 'Boombl4' },
+        { playerId: '76561197995889730', name: 'nitr0' },
+        { playerId: '76561199063238565', name: 'magixx' },
+        { playerId: '76561198043769572', name: 'arT' },
+        { playerId: '76561198134401925', name: 'YEKINDAR' }
+      ];
+
+      // Refresh the tracked pro players' Leetify stats and persist them.
+      // Runs once per app launch but is gated to at most once per calendar day.
+      let proStatsRefreshing = false;
+      async function refreshProStats() {
+        if (proStatsRefreshing) return;
+
+        const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+        const lastRefresh = await cs2TrackerDB.getSetting('proStatsLastRefresh');
+        if (lastRefresh === today) {
+          return; // already refreshed today
+        }
+
+        proStatsRefreshing = true;
+        try {
+          const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+          // A usable result: real finite numbers, not '-', 0, NaN or a missing field.
+          const isRealStats = (s) =>
+            Number.isFinite(s.reaction_time_ms) && s.reaction_time_ms > 0 &&
+            Number.isFinite(s.preaim) && s.preaim > 0;
+          let allOk = true;
+
+          for (const player of PRO_PLAYERS) {
+            let stats = { reaction_time_ms: '-', preaim: '-' };
+
+            // Leetify rate-limits bursts, so retry a few times with backoff.
+            for (let attempt = 0; attempt < 4; attempt++) {
+              stats = await getLeetifyStats(player.playerId);
+              if (isRealStats(stats)) break;
+              await sleep(1500 * (attempt + 1));
+            }
+
+            if (isRealStats(stats)) {
+              await cs2TrackerDB.saveProStats({
+                playerId: player.playerId,
+                name: player.name,
+                reaction_time_ms: stats.reaction_time_ms,
+                preaim: stats.preaim,
+                updatedAt: new Date().toISOString()
+              });
+            } else {
+              // Couldn't fetch (rate limit / outage): keep any existing value.
+              allOk = false;
+            }
+
+            await sleep(600); // space out requests to stay under the rate limit
+          }
+
+          // Only mark the day done if every player refreshed, so a partial
+          // (rate-limited) run retries on the next launch instead of waiting a day.
+          if (allOk) {
+            await cs2TrackerDB.setSetting('proStatsLastRefresh', today);
+          }
+        } catch (err) {
+          console.error('Failed to refresh pro stats:', err);
+        } finally {
+          proStatsRefreshing = false;
+        }
       }
 
       function openCSRep(playerId){
         if(playerId != steamUserId){
-          window.open(`https://csrep.gg/player/${playerId}`)
+          // Open in the user's system default browser instead of Overwolf's
+          // in-app browser. csrep.gg's Cloudflare challenge loops infinitely
+          // inside the embedded browser, so we hand the URL off to Chrome/etc.
+          overwolf.utils.openUrlInDefaultBrowser(`https://csrep.gg/player/${playerId}`)
         }
       }
 
@@ -972,6 +1115,8 @@
         document.getElementById('open-subwindow').style.display = 'none';
         updateMatchCount();
         fetchUserHistory();
+        // Refresh curated pro player stats (day-gated, fire-and-forget)
+        refreshProStats();
 
         // Remove all listeners
         overwolf.games.onGameInfoUpdated.removeListener(handleGameInfoUpdate)

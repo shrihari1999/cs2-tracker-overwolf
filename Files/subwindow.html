@@ -11,7 +11,7 @@
 
 			async function initDB() {
 				return new Promise((resolve, reject) => {
-					const request = indexedDB.open('CS2TrackerDB', 2);
+					const request = indexedDB.open('CS2TrackerDB', 3);
 					request.onerror = () => reject(request.error);
 					request.onsuccess = () => {
 						db = request.result;
@@ -35,6 +35,9 @@
 						}
 						if (!database.objectStoreNames.contains('settings')) {
 							database.createObjectStore('settings', { keyPath: 'key' });
+						}
+						if (!database.objectStoreNames.contains('proStats')) {
+							database.createObjectStore('proStats', { keyPath: 'playerId' });
 						}
 					};
 				});
