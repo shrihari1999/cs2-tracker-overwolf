@@ -430,7 +430,10 @@
 
       function openCSRep(playerId){
         if(playerId != steamUserId){
-          window.open(`https://csrep.gg/player/${playerId}`)
+          // Open in the user's system default browser instead of Overwolf's
+          // in-app browser. csrep.gg's Cloudflare challenge loops infinitely
+          // inside the embedded browser, so we hand the URL off to Chrome/etc.
+          overwolf.utils.openUrlInDefaultBrowser(`https://csrep.gg/player/${playerId}`)
         }
       }
 
